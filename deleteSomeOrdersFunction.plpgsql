@@ -1,0 +1,56 @@
+CREATE OR REPLACE FUNCTION
+    deleteSomeOrdersFunction(maxOrderDeletions INTEGER)
+RETURNS INTEGER AS $$
+
+    DECLARE
+        total_deleted    INTEGER := 0;
+        deleted_count    INTEGER;
+        theSupplierID    INTEGER;
+        theSupplierName  TEXT;
+        future_orders_var    INTEGER;
+        cancelled_orders_var INTEGER;
+
+    DECLARE supplierCursor CURSOR FOR
+        WITH SupplierStats AS (
+            SELECT s.supplierID, s.supplierName,
+                COUNT(*) FILTER (WHERE o.orderDate > '2024-01-05') AS future_orders,
+                COUNT(*) FILTER (WHERE o.orderDate <= '2024-01-05' AND o.status = 'cnld') AS cancelled_orders
+            FROM Supplier s
+            LEFT JOIN OrderSupply o ON s.supplierID = o.supplierID
+            GROUP BY s.supplierID, s.supplierName
+        )
+        SELECT supplierID, supplierName, future_orders, cancelled_orders
+        FROM SupplierStats
+        WHERE cancelled_orders > 0 AND future_orders > 0
+        ORDER BY cancelled_orders DESC, supplierName ASC;
+
+    BEGIN
+
+        -- Input Validation
+        IF maxOrderDeletions <= 0 THEN
+            RETURN -1;  /* Illegal value of maxOrderDeletions */
+        END IF;
+
+        OPEN supplierCursor;
+
+        LOOP
+            FETCH supplierCursor INTO theSupplierID, theSupplierName, future_orders_var, cancelled_orders_var;
+
+            EXIT WHEN NOT FOUND;
+
+            IF total_deleted + future_orders_var > maxOrderDeletions THEN
+                EXIT;
+            END IF;
+
+            DELETE FROM OrderSupply
+            WHERE supplierID = theSupplierID AND orderDate > '2024-01-05';
+            GET DIAGNOSTICS deleted_count = ROW_COUNT;
+            total_deleted := total_deleted + deleted_count;
+        END LOOP;
+        CLOSE supplierCursor;
+
+        RETURN total_deleted;
+
+    END
+
+$$ LANGUAGE plpgsql; 
